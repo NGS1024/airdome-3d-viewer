@@ -1,0 +1,37 @@
+# Python 런타임
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 가상환경
+venv/
+.venv/
+env/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 사용자 설정 (PC별 — 필요 시 추가)
+# gui_settings.json
+# config_local.py
+
+# 임시 산출물
+*.log
+*.tmp
+output/
+temp/
+
+# 빌드 결과
+build/
+dist/
+*.spec
+*.egg-info/
