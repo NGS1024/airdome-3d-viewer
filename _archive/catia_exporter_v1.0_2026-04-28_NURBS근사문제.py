@@ -62,8 +62,7 @@ class STEPExporter:
         u_p = [i / (nu - 1) for i in range(nu)]
         v_p = [j / (nv - 1) for j in range(nv)]
 
-        # ── 1단계: dome_z 위 격자점 산출 (surface가 통과해야 할 data points) ──
-        data_pts = []
+        cpts = []
         for i in range(nu):
             row = []
             for j in range(nv):
@@ -71,11 +70,14 @@ class STEPExporter:
                 y = (v_p[j] - 0.5) * length
                 z = dome_z(x, y)
                 row.append((x, y, z))
-            data_pts.append(row)
+            cpts.append(row)
 
         def clamp_knots(n, d):
             nk = n + d + 1
             return [0.0 if i <= d else 1.0 if i >= nk-d-1 else (i-d)/(n-d) for i in range(nk)]
+
+        ku_raw = clamp_knots(nu, deg_u)
+        kv_raw = clamp_knots(nv, deg_v)
 
         def to_mults(knots):
             u, m = [], []
@@ -86,112 +88,6 @@ class STEPExporter:
                     m[-1] += 1
             return u, m
 
-        # ── NURBS 보간 헬퍼 (surface와 cable 양쪽에서 공유) ──
-        # v1.0 (2026-04-28): cable에만 있던 함수를 surface에도 쓰도록 모듈 상단으로 승격
-        # 목적: surface가 dome_z를 정확히 통과 (기존 approximation→interpolation 전환)
-        def _chord_params(pts):
-            t = [0.0]
-            for i in range(1, len(pts)):
-                d = math.sqrt(sum((pts[i][k]-pts[i-1][k])**2 for k in range(3)))
-                t.append(t[-1] + d)
-            L = t[-1]
-            return [v/L for v in t] if L > 1e-10 else [i/(len(pts)-1) for i in range(len(pts))]
-
-        def _interp_knots(t, p):
-            n = len(t) - 1
-            U = [0.0] * (p + 1)
-            for j in range(1, n - p + 1):
-                U.append(sum(t[j:j+p]) / p)
-            U.extend([1.0] * (p + 1))
-            return U
-
-        def _basis(U, i, p, u):
-            m = len(U) - 1
-            if abs(u - U[m]) < 1e-10 and i == m - p - 1:
-                return 1.0
-            if p == 0:
-                return 1.0 if U[i] <= u < U[i+1] else 0.0
-            v = 0.0
-            d1 = U[i+p] - U[i]
-            if d1 > 1e-10:
-                v += (u - U[i]) / d1 * _basis(U, i, p-1, u)
-            d2 = U[i+p+1] - U[i+1]
-            if d2 > 1e-10:
-                v += (U[i+p+1] - u) / d2 * _basis(U, i+1, p-1, u)
-            return v
-
-        def _solve_interp(data, t, U, p):
-            """주어진 data·param·knot로 NURBS 제어점을 가우스 소거로 풀이."""
-            n = len(data) - 1
-            if n < p:
-                return [list(d) for d in data]
-            sz = n + 1
-            N_mat = [[_basis(U, ii, p, t[k]) for ii in range(sz)] for k in range(sz)]
-            ctrl = [[0.0, 0.0, 0.0] for _ in range(sz)]
-            for dim in range(3):
-                rhs = [data[k][dim] for k in range(sz)]
-                A = [N_mat[r][:] + [rhs[r]] for r in range(sz)]
-                for col in range(sz):
-                    mx, mr = abs(A[col][col]), col
-                    for r in range(col+1, sz):
-                        if abs(A[r][col]) > mx:
-                            mx, mr = abs(A[r][col]), r
-                    if mr != col:
-                        A[col], A[mr] = A[mr], A[col]
-                    if abs(A[col][col]) < 1e-15:
-                        continue
-                    for r in range(col+1, sz):
-                        f = A[r][col] / A[col][col]
-                        for c in range(col, sz+1):
-                            A[r][c] -= f * A[col][c]
-                x = [0.0] * sz
-                for ii in range(sz-1, -1, -1):
-                    x[ii] = A[ii][sz]
-                    for jj in range(ii+1, sz):
-                        x[ii] -= A[ii][jj] * x[jj]
-                    if abs(A[ii][ii]) > 1e-15:
-                        x[ii] /= A[ii][ii]
-                for ii in range(sz):
-                    ctrl[ii][dim] = x[ii]
-            return ctrl
-
-        def _interp_bspline(data, p=3, t=None, U=None):
-            """1D NURBS 보간 진입점. t/U 미지정 시 chord-length param 자동 산출."""
-            n = len(data) - 1
-            if n < p:
-                return [list(d) for d in data], clamp_knots(len(data), min(p, n))
-            if t is None:
-                t = _chord_params(data)
-            if U is None:
-                U = _interp_knots(t, p)
-            return _solve_interp(data, t, U, p), U
-
-        # ── 2단계: Surface 양방향(텐서곱) NURBS 보간 ──
-        # uniform parameter 사용 (격자가 균등 → chord와 거의 동일, knot 통일성 보장)
-        # Phase 1: U 방향 (각 j 열에 대해 nu개 점 보간) → intermediate 제어점
-        # Phase 2: V 방향 (각 i 행에 대해 intermediate nv개 점 보간) → final 제어점
-        # 결과 surface는 격자점 (t_u[i], t_v[j])에서 정확히 data_pts[i][j] 통과
-        t_u = [i / (nu - 1) for i in range(nu)]
-        t_v = [j / (nv - 1) for j in range(nv)]
-        U_surf = _interp_knots(t_u, deg_u)
-        V_surf = _interp_knots(t_v, deg_v)
-
-        intermediate = [[None]*nv for _ in range(nu)]
-        for j in range(nv):
-            col_data = [data_pts[i][j] for i in range(nu)]
-            ctrl_col = _solve_interp(col_data, t_u, U_surf, deg_u)
-            for i in range(nu):
-                intermediate[i][j] = ctrl_col[i]
-
-        cpts = [[None]*nv for _ in range(nu)]
-        for i in range(nu):
-            row_data = intermediate[i]
-            ctrl_row = _solve_interp(row_data, t_v, V_surf, deg_v)
-            for j in range(nv):
-                cpts[i][j] = tuple(ctrl_row[j])
-
-        ku_raw = U_surf
-        kv_raw = V_surf
         ku_u, ku_m = to_mults(ku_raw)
         kv_u, kv_m = to_mults(kv_raw)
 
@@ -403,9 +299,75 @@ class STEPExporter:
         # ════════════════════════════════════════════════════════════
         cable_curve_ids = []
         if cable_spacing > 0:
+            # B-Spline 보간법 헬퍼 함수들
+            def _chord_params(pts):
+                t = [0.0]
+                for i in range(1, len(pts)):
+                    d = math.sqrt(sum((pts[i][k]-pts[i-1][k])**2 for k in range(3)))
+                    t.append(t[-1] + d)
+                L = t[-1]
+                return [v/L for v in t] if L > 1e-10 else [i/(len(pts)-1) for i in range(len(pts))]
+
+            def _interp_knots(t, p):
+                n = len(t) - 1
+                U = [0.0] * (p + 1)
+                for j in range(1, n - p + 1):
+                    U.append(sum(t[j:j+p]) / p)
+                U.extend([1.0] * (p + 1))
+                return U
+
+            def _basis(U, i, p, u):
+                m = len(U) - 1
+                if abs(u - U[m]) < 1e-10 and i == m - p - 1:
+                    return 1.0
+                if p == 0:
+                    return 1.0 if U[i] <= u < U[i+1] else 0.0
+                v = 0.0
+                d1 = U[i+p] - U[i]
+                if d1 > 1e-10:
+                    v += (u - U[i]) / d1 * _basis(U, i, p-1, u)
+                d2 = U[i+p+1] - U[i+1]
+                if d2 > 1e-10:
+                    v += (U[i+p+1] - u) / d2 * _basis(U, i+1, p-1, u)
+                return v
+
+            def _interp_bspline(data, p=3):
+                n = len(data) - 1
+                if n < p:
+                    return list(data), clamp_knots(len(data), min(p, n))
+                t = _chord_params(data)
+                U = _interp_knots(t, p)
+                sz = n + 1
+                N_mat = [[_basis(U, i, p, t[k]) for i in range(sz)] for k in range(sz)]
+                ctrl = [[0.0, 0.0, 0.0] for _ in range(sz)]
+                for dim in range(3):
+                    rhs = [data[k][dim] for k in range(sz)]
+                    A = [N_mat[r][:] + [rhs[r]] for r in range(sz)]
+                    for col in range(sz):
+                        mx, mr = abs(A[col][col]), col
+                        for r in range(col+1, sz):
+                            if abs(A[r][col]) > mx:
+                                mx, mr = abs(A[r][col]), r
+                        if mr != col:
+                            A[col], A[mr] = A[mr], A[col]
+                        if abs(A[col][col]) < 1e-15:
+                            continue
+                        for r in range(col+1, sz):
+                            f = A[r][col] / A[col][col]
+                            for c in range(col, sz+1):
+                                A[r][c] -= f * A[col][c]
+                    x = [0.0] * sz
+                    for i in range(sz-1, -1, -1):
+                        x[i] = A[i][sz]
+                        for j in range(i+1, sz):
+                            x[i] -= A[i][j] * x[j]
+                        if abs(A[i][i]) > 1e-15:
+                            x[i] /= A[i][i]
+                    for i in range(sz):
+                        ctrl[i][dim] = x[i]
+                return ctrl, U
+
             # 대각선 케이블넷 생성 (3D 뷰어와 동일한 로직)
-            # NURBS 보간 헬퍼 (_chord_params/_interp_knots/_basis/_interp_bspline)는
-            # surface와 공유하기 위해 export() 상단에서 정의됨
             interp_n = 40
 
             for d in range(2):
