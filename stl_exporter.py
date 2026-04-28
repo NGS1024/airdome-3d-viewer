@@ -37,9 +37,24 @@ class STLExporter:
         a_val, b_val = width / 2, length / 2
 
         def dz(x, y):
-            rx = 1 - (x / a_val) ** 2
-            ry = 1 - (y / b_val) ** 2
-            return height * math.sqrt(max(rx, 0)) * math.sqrt(max(ry, 0))
+            # Barrel Vault + 1/4 회전 hip (균일 곡률 평형 형태)
+            # x: 단변 방향 (반경 a_val), y: 장변 방향 (반경 b_val)
+            R = (a_val * a_val + height * height) / (2 * height)
+            cy = height - R
+            ridge = max(0.0, b_val - a_val)
+            sx = R * R - x * x
+            if sx <= 0:
+                return 0.0
+            z_section = cy + math.sqrt(sx)
+            if z_section <= 0:
+                return 0.0
+            if abs(y) <= ridge:
+                return z_section
+            dy = abs(y) - ridge
+            fr_sq = 1 - (dy / a_val) ** 2
+            if fr_sq <= 0:
+                return 0.0
+            return z_section * math.sqrt(fr_sq)
 
         us = [a_val * (-1 + 2 * i / res) for i in range(res + 1)]
         vs = [b_val * (-1 + 2 * j / res) for j in range(res + 1)]

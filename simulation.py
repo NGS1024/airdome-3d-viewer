@@ -546,10 +546,29 @@ const S=0.001;
 let a=W/2*S, b=L/2*S, Hs=H*S;
 let a_mm=W/2, b_mm=L/2, H_mm=H;
 
-function domeZ(x,y,h){{ let rx=1-(x/(W/2*S))**2, ry=1-(y/(L/2*S))**2;
-  return (rx>0&&ry>0)?(h||Hs)*Math.sqrt(rx)*Math.sqrt(ry):0; }}
-function domeZ_mm(x,y){{ let rx=1-(x/a_mm)**2, ry=1-(y/b_mm)**2;
-  return (rx>0&&ry>0)?H_mm*Math.sqrt(rx)*Math.sqrt(ry):0; }}
+// Barrel Vault + 1/4 회전 hip (균일 곡률 평형 형태)
+// x: 단변 방향 (반경 a), y: 장변 방향 (반경 b), 능선은 y축 따라 형성
+function domeZ(x,y,h){{
+  const Hh=h||Hs, aa=W/2*S, bb=L/2*S;
+  const R=(aa*aa+Hh*Hh)/(2*Hh), cy=Hh-R, ridge=Math.max(0,bb-aa);
+  const sx=R*R-x*x;
+  if(sx<=0)return 0;
+  const zSec=cy+Math.sqrt(sx);
+  if(zSec<=0)return 0;
+  if(Math.abs(y)<=ridge)return zSec;
+  const dy=Math.abs(y)-ridge, fr=1-(dy/aa)*(dy/aa);
+  return fr<=0?0:zSec*Math.sqrt(fr);
+}}
+function domeZ_mm(x,y){{
+  const R=(a_mm*a_mm+H_mm*H_mm)/(2*H_mm), cy=H_mm-R, ridge=Math.max(0,b_mm-a_mm);
+  const sx=R*R-x*x;
+  if(sx<=0)return 0;
+  const zSec=cy+Math.sqrt(sx);
+  if(zSec<=0)return 0;
+  if(Math.abs(y)<=ridge)return zSec;
+  const dy=Math.abs(y)-ridge, fr=1-(dy/a_mm)*(dy/a_mm);
+  return fr<=0?0:zSec*Math.sqrt(fr);
+}}
 
 // ================================================================
 //  물리 엔진
@@ -560,7 +579,16 @@ const Ph={{
     const e=10,am=a_mm,bm=b_mm;
     const ax=Math.min(Math.max(x,-am+e*2),am-e*2);
     const ay=Math.min(Math.max(y,-bm+e*2),bm-e*2);
-    function zf(px,py){{let rx=1-(px/am)**2,ry=1-(py/bm)**2;return(rx>0&&ry>0)?He*Math.sqrt(rx)*Math.sqrt(ry):0;}}
+    function zf(px,py){{
+      const R=(am*am+He*He)/(2*He), cy=He-R, ridge=Math.max(0,bm-am);
+      const sx=R*R-px*px;
+      if(sx<=0)return 0;
+      const zSec=cy+Math.sqrt(sx);
+      if(zSec<=0)return 0;
+      if(Math.abs(py)<=ridge)return zSec;
+      const dy=Math.abs(py)-ridge, fr=1-(dy/am)*(dy/am);
+      return fr<=0?0:zSec*Math.sqrt(fr);
+    }}
     const z0=zf(ax,ay),zxp=zf(ax+e,ay),zxm=zf(ax-e,ay);
     const zyp=zf(ax,ay+e),zym=zf(ax,ay-e);
     const zpp=zf(ax+e,ay+e),zpm=zf(ax+e,ay-e);
@@ -1289,11 +1317,17 @@ const WFLOW={{
     const ndx=Math.cos(rad), ndz=Math.sin(rad);
     return {{dx:Math.cos(rad)*vn, dz:Math.sin(rad)*vn, spd:spd, dir:dir, ndx:ndx, ndz:ndz, vn:vn}};
   }},
-  // 돔 표면 높이 (3D 좌표계)
+  // 돔 표면 높이 (3D 좌표계) — Barrel Vault + Hip 형상
+  // x: 단변 방향 (반경 a), z: 장변 방향 (반경 b)
   domeH:function(x,z){{
-    const rx=x/a, rz=z/b;
-    const r2=rx*rx+rz*rz;
-    return (r2<1)?Hs*Math.sqrt(Math.max(0,(1-rx*rx)))*Math.sqrt(Math.max(0,(1-rz*rz))):0;
+    const R=(a*a+Hs*Hs)/(2*Hs), cy=Hs-R, ridge=Math.max(0,b-a);
+    const sx=R*R-x*x;
+    if(sx<=0)return 0;
+    const zSec=cy+Math.sqrt(sx);
+    if(zSec<=0)return 0;
+    if(Math.abs(z)<=ridge)return zSec;
+    const dz=Math.abs(z)-ridge, fr=1-(dz/a)*(dz/a);
+    return fr<=0?0:zSec*Math.sqrt(fr);
   }},
   // 유동장 계산 (포텐셜 유동 + 와류 모사)
   flowField:function(x,y,z,fs){{

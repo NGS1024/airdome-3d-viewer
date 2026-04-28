@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>NCWC 돔 형상 비교 — 기존 vs 신규</title>
+<style>
+  body { margin:0; background:#0a0e17; color:#e0e6ed; font-family:'Segoe UI','Malgun Gothic',sans-serif; overflow:hidden; }
+  #canvas { display:block; cursor:grab; }
+  #canvas:active { cursor:grabbing; }
+  .label { position:absolute; top:60px; padding:10px 18px; border-radius:10px; font-weight:bold; backdrop-filter:blur(10px); font-size:14px; max-width:280px; }
+  #labelL { left:20px; background:rgba(200,170,50,0.15); border:1px solid #c8aa32; color:#ffd966; }
+  #labelR { right:20px; background:rgba(50,200,170,0.15); border:1px solid #32c8aa; color:#66ffd9; }
+  .label .sub { font-weight:normal; font-size:11px; color:#aaa; display:block; margin-top:3px; }
+  #info { position:absolute; bottom:20px; left:20px; padding:12px 18px; background:rgba(255,255,255,0.05); border-radius:10px; font-size:12px; line-height:1.7; backdrop-filter:blur(10px); max-width:560px; }
+  #info b { color:#7ec8e3; }
+  .title { position:absolute; top:18px; left:50%; transform:translateX(-50%); font-size:18px; font-weight:bold; color:#7ec8e3; }
+  .controls { position:absolute; bottom:20px; right:20px; display:flex; gap:6px; flex-direction:column; align-items:flex-end; }
+  button { background:rgba(74,158,200,0.2); color:#fff; border:1px solid #4a9ec8; padding:7px 14px; border-radius:18px; cursor:pointer; font-size:12px; }
+  button:hover { background:rgba(74,158,200,0.4); }
+  .legend { position:absolute; top:60px; left:50%; transform:translateX(-50%); display:flex; gap:14px; font-size:11px; }
+  .legend span { padding:4px 10px; border-radius:14px; background:rgba(255,255,255,0.05); }
+  #err { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); padding:20px; background:rgba(255,80,80,0.15); border:1px solid #ff5050; border-radius:10px; color:#ffaaaa; max-width:500px; display:none; }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+<div id="err"></div>
+
+<div class="title">NCWC 돔 형상 비교 — 1차 신규(좌, 보라) vs 2차 신규 원호(우, 청록)</div>
+
+<div class="legend">
+  <span>🖱 드래그: 회전</span>
+  <span>🖲 휠: 줌</span>
+  <span>좌표 단위: m (메모리상)</span>
+</div>
+
+<div class="label" id="labelL">
+  1차 시도 — 반타원체 단면
+  <span class="sub">중앙 반타원통 + 양끝 1/4 반타원체</span>
+  <span class="sub">곡률이 위치마다 다름 (정점 평평·양끝 가파름)</span>
+</div>
+
+<div class="label" id="labelR">
+  ✓ 2차 — 원호 + 반구 hip
+  <span class="sub">단면이 원호 (R = (a²+H²)/(2H))</span>
+  <span class="sub">곡률 일정 → 균일 내압 평형 형태</span>
+</div>
+
+<div id="info">
+  <b>NCWC 입력:</b> L = 104,242 / W = 43,282 / H = 15,850 (mm) | 화면에서는 m 단위로 그림<br>
+  <b>비율:</b> L/W = 2.41 (길쭉) | H/(W/2) = 0.732<br>
+  <b>원호 R:</b> (a² + H²) / (2H) = 22,700 mm | <b>원의 중심:</b> 지면에서 -6,850 mm (지하)<br>
+  <b>능선 길이:</b> 60.96 m | <b>Hip 끝:</b> 21.64 m × 2 (z=0 자동으로 떨어짐)
+</div>
+
+<div class="controls">
+  <button onclick="toggleWire()">Wireframe 토글</button>
+  <button onclick="resetCam()">시점 복귀</button>
+  <button onclick="setView('top')">위에서 (평면도)</button>
+  <button onclick="setView('side')">옆에서 (장변 입면)</button>
+  <button onclick="setView('end')">끝에서 (단변 입면)</button>
+  <button onclick="toggleCompare()">📊 단면 곡선 비교 2D</button>
+</div>
+
+<div id="compareOverlay" style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(10,14,23,0.96); border:1px solid #4a9ec8; border-radius:12px; padding:20px; backdrop-filter:blur(10px); z-index:100;">
+  <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+    <span style="font-size:14px; color:#7ec8e3; font-weight:bold;">단변 단면 곡선 비교 (도면 ↔ 1차 반타원체 ↔ 2차 원호)</span>
+    <button onclick="toggleCompare()" style="padding:2px 12px;">✕ 닫기</button>
+  </div>
+  <canvas id="cmpCanvas" width="900" height="500"></canvas>
+  <div style="font-size:12px; color:#aaa; margin-top:8px;">
+    가로축: y 위치 (단변 방향, mm) | 세로축: z 높이 (mm) | 그리드 5,000mm 간격<br>
+    <span style="color:#c8a0ff">━ 1차 반타원체</span> &nbsp;|&nbsp;
+    <span style="color:#66ffd9">━ 2차 원호 (R=22,700)</span> &nbsp;|&nbsp;
+    <span style="color:#ffd966">━ 정확한 반원 (R=W/2=21,641)</span>
+  </div>
+</div>
+
+<div style="position:absolute; top:60px; right:20px; padding:6px 10px; background:rgba(74,158,200,0.2); border:1px solid #4a9ec8; border-radius:14px; font-size:11px; color:#7ec8e3;">v2.1 (단면 비교 추가)</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+window.addEventListener('error', (e) => {
+  const el = document.getElementById('err');
+  el.style.display = 'block';
+  el.textContent = '오류: ' + e.message + ' (' + e.filename + ':' + e.lineno + ')';
+});
+
+if (typeof THREE === 'undefined') {
+  document.getElementById('err').style.display='block';
+  document.getElementById('err').textContent='Three.js CDN 로드 실패. 인터넷 연결을 확인해 주세요.';
+} else {
+
+// === 단위: m 로 변환 ===
+const W = 43.282, L = 104.242, H = 15.850;
+
+// === 곡면 함수 ===
+function z_pillow(x, y) {
+  const a = W/2, b = L/2;
+  const rx = 1 - (x/b)**2, ry = 1 - (y/a)**2;
+  if (rx <= 0 || ry <= 0) return 0;
+  return H * Math.sqrt(rx) * Math.sqrt(ry);
+}
+
+function z_barrelHip(x, y) {
+  const a = W/2;
+  const ridge = Math.max(0, L/2 - a);
+  const yn = y/a, sy = 1 - yn*yn;
+  if (sy <= 0) return 0;
+  if (Math.abs(x) <= ridge) return H * Math.sqrt(sy);
+  const dx = Math.abs(x) - ridge;
+  const sx = 1 - (dx/a)**2;
+  if (sx <= 0) return 0;
+  return H * Math.sqrt(sy * sx);
+}
+
+// 신규 (원호 단면 + 1/4 반원 회전 hip):
+//   단변 단면이 원호 (균일 곡률, 균일 내압 평형 형태)
+//   양 끝 hip은 그 단면을 dx에 따라 1/4 반원으로 줄임
+//   → 모든 경계 (직사각형 외곽)에서 z=0으로 자연스럽게 떨어짐, 메쉬 깨짐 없음
+function z_arcSphere(x, y) {
+  const a = W/2;
+  const R = (a*a + H*H) / (2*H);   // 단변 원호 반지름 (NCWC: 22700)
+  const cy = H - R;                 // 원의 중심 z (NCWC: -6850)
+  const ridge = Math.max(0, L/2 - a);
+
+  // 단변 단면 z (원호) — 어느 x에서나 동일한 단면 형태
+  const sy = R*R - y*y;
+  if (sy <= 0) return 0;
+  const z_section = cy + Math.sqrt(sy);
+  if (z_section <= 0) return 0;
+
+  if (Math.abs(x) <= ridge) {
+    // 중앙: 단변 원호 그대로
+    return z_section;
+  }
+  // 양 끝 hip: 단변 원호를 dx에 따라 1/4 반원으로 비례 축소
+  // f(dx) = √(1 - (dx/a)²) — dx=0에서 1, dx=a에서 0
+  const dx = Math.abs(x) - ridge;
+  const fr_sq = 1 - (dx/a)*(dx/a);
+  if (fr_sq <= 0) return 0;
+  return z_section * Math.sqrt(fr_sq);
+}
+
+// === Three.js Scene ===
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0e17);
+
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 5000);
+
+// === 라이팅 ===
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dl1 = new THREE.DirectionalLight(0xffffff, 0.8);
+dl1.position.set(60, 100, 60); scene.add(dl1);
+const dl2 = new THREE.DirectionalLight(0x88aaff, 0.35);
+dl2.position.set(-60, 40, -60); scene.add(dl2);
+
+// === 그리드 + 축 ===
+const grid = new THREE.GridHelper(400, 40, 0x4a9ec8, 0x222);
+grid.material.transparent = true; grid.material.opacity = 0.3;
+scene.add(grid);
+const axes = new THREE.AxesHelper(20);
+axes.material.opacity = 0.7; axes.material.transparent = true;
+scene.add(axes);
+
+// === 메쉬 빌더 ===
+const OFFSET = L/2 + 25; // 두 형상을 X축으로 분리
+
+const RES_W = 60, RES_L = 100;
+
+function buildMesh(zFn, color, dxOffset) {
+  const geo = new THREE.BufferGeometry();
+  const verts = [], norms = [], idx = [];
+  const a = W/2, b = L/2;
+
+  for (let j = 0; j <= RES_W; j++) {
+    for (let i = 0; i <= RES_L; i++) {
+      const x = -b + (2*b) * (i/RES_L);
+      const y = -a + (2*a) * (j/RES_W);
+      const z = zFn(x, y);
+      // Three.js 좌표: Y가 위 → (x, z, y)
+      verts.push(x + dxOffset, z, y);
+
+      // 노멀 (수치 미분)
+      const dxs = Math.max(W, L) * 0.0005;
+      const zx1 = zFn(x - dxs, y), zx2 = zFn(x + dxs, y);
+      const zy1 = zFn(x, y - dxs), zy2 = zFn(x, y + dxs);
+      let nx = -(zx2 - zx1)/(2*dxs);
+      let ny_ = -(zy2 - zy1)/(2*dxs);
+      let nz = 1.0;
+      const ml = Math.sqrt(nx*nx + ny_*ny_ + nz*nz);
+      norms.push(nx/ml, nz/ml, ny_/ml);
+    }
+  }
+
+  for (let j = 0; j < RES_W; j++) {
+    for (let i = 0; i < RES_L; i++) {
+      const a_ = j*(RES_L+1) + i;
+      const b_ = j*(RES_L+1) + i + 1;
+      const c_ = (j+1)*(RES_L+1) + i + 1;
+      const d_ = (j+1)*(RES_L+1) + i;
+      idx.push(a_, b_, c_, a_, c_, d_);
+    }
+  }
+
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(norms, 3));
+  geo.setIndex(idx);
+
+  const mat = new THREE.MeshPhongMaterial({
+    color, transparent:true, opacity:0.85, side:THREE.DoubleSide, shininess:60
+  });
+  const wireMat = new THREE.MeshBasicMaterial({
+    color, wireframe:true, transparent:true, opacity:0.4
+  });
+
+  const meshObj = new THREE.Mesh(geo, mat);
+  const wireObj = new THREE.Mesh(geo, wireMat);
+  scene.add(meshObj); scene.add(wireObj);
+
+  // 베이스 외곽선
+  const baseGeo = new THREE.PlaneGeometry(L, W);
+  baseGeo.rotateX(Math.PI/2);
+  baseGeo.translate(dxOffset, 0, 0);
+  const edge = new THREE.LineSegments(
+    new THREE.EdgesGeometry(baseGeo),
+    new THREE.LineBasicMaterial({color:0x888, transparent:true, opacity:0.6})
+  );
+  scene.add(edge);
+
+  return {mesh:meshObj, wire:wireObj};
+}
+
+const leftObj = buildMesh(z_barrelHip, 0xc8a0ff, -OFFSET);   // 1차: 반타원체 (보라)
+const rightObj = buildMesh(z_arcSphere, 0x66ffd9, +OFFSET);  // 2차: 원호 (청록)
+
+// === 카메라 컨트롤 ===
+let theta = 0.6, phi = 0.5, dist = 220;
+const target = new THREE.Vector3(0, 5, 0);
+
+function updateCam() {
+  camera.position.x = target.x + dist * Math.cos(phi) * Math.sin(theta);
+  camera.position.z = target.z + dist * Math.cos(phi) * Math.cos(theta);
+  camera.position.y = target.y + dist * Math.sin(phi);
+  camera.lookAt(target);
+}
+updateCam();
+
+let isDown = false, lastX, lastY;
+canvas.addEventListener('mousedown', e=>{ isDown=true; lastX=e.clientX; lastY=e.clientY; });
+window.addEventListener('mouseup', ()=>isDown=false);
+window.addEventListener('mousemove', e=>{
+  if(!isDown) return;
+  theta -= (e.clientX - lastX) * 0.005;
+  phi = Math.max(0.05, Math.min(Math.PI/2-0.05, phi + (e.clientY - lastY) * 0.005));
+  lastX = e.clientX; lastY = e.clientY;
+  updateCam();
+});
+canvas.addEventListener('wheel', e=>{
+  dist *= (1 + Math.sign(e.deltaY) * 0.1);
+  dist = Math.max(40, Math.min(800, dist));
+  updateCam(); e.preventDefault();
+}, {passive:false});
+
+// === 토글/뷰 ===
+let wireOn = false;
+function toggleWire() {
+  wireOn = !wireOn;
+  leftObj.mesh.visible = !wireOn;
+  rightObj.mesh.visible = !wireOn;
+}
+window.toggleWire = toggleWire;
+
+function resetCam() { theta=0.6; phi=0.5; dist=220; target.set(0,5,0); updateCam(); }
+window.resetCam = resetCam;
+
+function setView(name) {
+  if (name === 'top')  { theta=0; phi=Math.PI/2-0.05; dist=240; target.set(0,0,0); }
+  if (name === 'side') { theta=0; phi=0.05; dist=200; target.set(0,8,0); }
+  if (name === 'end')  { theta=Math.PI/2; phi=0.05; dist=200; target.set(0,8,0); }
+  updateCam();
+}
+window.setView = setView;
+
+// === 리사이즈 + 애니메이션 ===
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+animate();
+
+// === 단면 곡선 2D 비교 ===
+function drawCompare() {
+  const c = document.getElementById('cmpCanvas');
+  const ctx = c.getContext('2d');
+  const W_c = c.width, H_c = c.height;
+  ctx.clearRect(0, 0, W_c, H_c);
+  ctx.fillStyle = '#0a0e17'; ctx.fillRect(0,0,W_c,H_c);
+
+  // 좌표 변환 — y in [-a, a] → x_canvas, z in [0, H+1] → y_canvas
+  const a = W/2; // m
+  const padX = 60, padY = 40;
+  const plotW = W_c - 2*padX, plotH = H_c - 2*padY;
+  const yToX = y => padX + (y + a) / (2*a) * plotW;
+  const zToY = z => H_c - padY - (z / (H + 1)) * plotH;
+
+  // 그리드
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  for (let y = -20; y <= 20; y += 5) {
+    if (Math.abs(y) > a) continue;
+    const x = yToX(y);
+    ctx.beginPath(); ctx.moveTo(x, padY); ctx.lineTo(x, H_c - padY); ctx.stroke();
+  }
+  for (let z = 0; z <= 18; z += 5) {
+    const y = zToY(z);
+    ctx.beginPath(); ctx.moveTo(padX, y); ctx.lineTo(W_c - padX, y); ctx.stroke();
+    ctx.fillStyle = '#888'; ctx.font = '11px Consolas';
+    ctx.fillText(`${z}m`, 8, y + 4);
+  }
+  // x 라벨
+  ctx.fillStyle = '#888';
+  for (let y = -20; y <= 20; y += 10) {
+    if (Math.abs(y) > a) continue;
+    const x = yToX(y);
+    ctx.fillText(`${y}m`, x - 8, H_c - padY + 16);
+  }
+
+  // 곡선 그리기 함수
+  function plotCurve(zFn, color, lineWidth=2.5) {
+    ctx.strokeStyle = color; ctx.lineWidth = lineWidth; ctx.beginPath();
+    let started = false;
+    for (let i = 0; i <= 400; i++) {
+      const y = -a + (2*a) * (i / 400);
+      const z = zFn(y);
+      if (z < 0) continue;
+      const px = yToX(y), py = zToY(z);
+      if (!started) { ctx.moveTo(px, py); started = true; }
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  // 1차 반타원체: z = H · √(1 - (y/a)²)
+  plotCurve(y => {
+    const v = 1 - (y/a)**2;
+    return v <= 0 ? 0 : H * Math.sqrt(v);
+  }, '#c8a0ff');
+
+  // 2차 원호: z = (H-R) + √(R² - y²),  R = (a²+H²)/(2H)
+  plotCurve(y => {
+    const R = (a*a + H*H)/(2*H);
+    const sy = R*R - y*y;
+    return sy <= 0 ? 0 : (H - R) + Math.sqrt(sy);
+  }, '#66ffd9');
+
+  // 참고: 정확한 반원 (R = a)
+  plotCurve(y => {
+    const R = a;
+    const sy = R*R - y*y;
+    return sy <= 0 ? 0 : Math.sqrt(sy);
+  }, '#ffd966', 1.5);
+
+  // 베이스라인
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(yToX(-a), zToY(0)); ctx.lineTo(yToX(a), zToY(0)); ctx.stroke();
+}
+
+let cmpVisible = false;
+function toggleCompare() {
+  cmpVisible = !cmpVisible;
+  document.getElementById('compareOverlay').style.display = cmpVisible ? 'block' : 'none';
+  if (cmpVisible) drawCompare();
+}
+window.toggleCompare = toggleCompare;
+
+console.log('[OK] 두 형상 메쉬 빌드 완료. mesh 카운트=', scene.children.length, '— 단면 비교 2D 추가됨 (v2.1)');
+
+}
+</script>
+</body>
+</html>

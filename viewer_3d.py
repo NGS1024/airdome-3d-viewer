@@ -68,11 +68,11 @@ def generate_viewer_html(params):
 </div>
 <div id="profile">
   <b>Profile Analysis</b><br>
-  Type: Semi-Ellipsoidal<br>
+  Type: Barrel Vault + Hip Ends<br>
   Half-span (a): {params.get('width',0)/2:,.0f} mm<br>
   Half-length (b): {params.get('length',0)/2:,.0f} mm<br>
   Crown height (c): {params.get('height',0):,.0f} mm<br>
-  <div class="eq">z = H × √(1-(x/a)²) × √(1-(y/b)²)</div>
+  <div class="eq">단면: 원호 R=(a²+H²)/(2H) | Hip: √(1-(dy/a)²)</div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -84,8 +84,20 @@ const S = 0.001;
 const a = W/2*S, b = L/2*S, Hs = H*S;
 
 function domeZ(x,y) {{
-  let rx=1-(x/a)**2, ry=1-(y/b)**2;
-  return (rx>0&&ry>0) ? Hs*Math.sqrt(rx)*Math.sqrt(ry) : 0;
+  // Barrel Vault + 1/4 회전 hip (균일 곡률 평형 형태)
+  // x: 단변 방향 (반경 a), y: 장변 방향 (반경 b), 능선은 y축 따라 형성
+  const R = (a*a + Hs*Hs) / (2*Hs);
+  const cy = Hs - R;
+  const ridge = Math.max(0, b - a);
+  const sx = R*R - x*x;
+  if (sx <= 0) return 0;
+  const zSec = cy + Math.sqrt(sx);
+  if (zSec <= 0) return 0;
+  if (Math.abs(y) <= ridge) return zSec;
+  const dy = Math.abs(y) - ridge;
+  const frSq = 1 - (dy/a)*(dy/a);
+  if (frSq <= 0) return 0;
+  return zSec * Math.sqrt(frSq);
 }}
 
 // Scene

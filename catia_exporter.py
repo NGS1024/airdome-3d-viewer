@@ -20,16 +20,17 @@ class STEPExporter:
     """
 
     @staticmethod
-    def export(filepath, width, length, height, nu=13, nv=19,
+    def export(filepath, width, length, height, nu=21, nv=31,
                cable_spacing=0, foundation_depth=500):
         """STEP AP214 내보내기 — 지오메트리 분리 버전
 
         Args:
             filepath: 저장 경로
-            width: 돔 폭 (mm)
-            length: 돔 길이 (mm)
+            width: 돔 폭 (mm) — 단변
+            length: 돔 길이 (mm) — 장변 (능선 방향)
             height: 돔 높이 (mm)
-            nu, nv: B-Spline 제어점 수
+            nu, nv: B-Spline 제어점 수 (단변·장변 방향)
+                    기본 21×31 — Barrel Vault + Hip 형상의 능선·hip 경계 정확 표현
             cable_spacing: 케이블 간격 (mm), 0이면 케이블 없음
             foundation_depth: 기초 깊이 (mm), 기본 500mm
         """
@@ -37,9 +38,25 @@ class STEPExporter:
         b_val = length / 2
 
         def dome_z(x, y):
-            xn, yn = x / a_val, y / b_val
-            rx, ry = 1.0 - xn*xn, 1.0 - yn*yn
-            return height * math.sqrt(max(rx, 0)) * math.sqrt(max(ry, 0))
+            # Barrel Vault + 1/4 회전 hip (균일 곡률 평형 형태)
+            # x: 단변 방향 (반경 a_val), y: 장변 방향 (반경 b_val)
+            # 단변 단면이 원호 R=(a²+H²)/(2H), 양 끝 hip은 √(1-(dy/a)²)로 비례 축소
+            R = (a_val * a_val + height * height) / (2 * height)
+            cy = height - R
+            ridge = max(0.0, b_val - a_val)
+            sx = R * R - x * x
+            if sx <= 0:
+                return 0.0
+            z_section = cy + math.sqrt(sx)
+            if z_section <= 0:
+                return 0.0
+            if abs(y) <= ridge:
+                return z_section
+            dy = abs(y) - ridge
+            fr_sq = 1 - (dy / a_val) ** 2
+            if fr_sq <= 0:
+                return 0.0
+            return z_section * math.sqrt(fr_sq)
 
         deg_u, deg_v = 3, 3
         u_p = [i / (nu - 1) for i in range(nu)]
